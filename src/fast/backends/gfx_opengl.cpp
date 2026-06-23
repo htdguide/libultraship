@@ -708,7 +708,10 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 }
 
 void GfxRenderingAPIOGL::Init() {
-#if !defined(__linux__) && !defined(__OpenBSD__)
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] OGL::Init start; GL_VERSION=%s\n", (const char*)glGetString(GL_VERSION)); fflush(stderr);
+#endif
+#if !defined(__linux__) && !defined(__OpenBSD__) && !defined(USE_OPENGLES) && !defined(__EMSCRIPTEN__)
     glewInit();
 #endif
 
@@ -741,6 +744,9 @@ void GfxRenderingAPIOGL::Init() {
     mPixelDepthRbSize = 1;
 
     glGetIntegerv(GL_MAX_SAMPLES, &mMaxMsaaLevel);
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] OGL::Init done, maxMsaa=%d\n", mMaxMsaaLevel); fflush(stderr);
+#endif
 }
 
 void GfxRenderingAPIOGL::OnResize() {
@@ -758,6 +764,9 @@ void GfxRenderingAPIOGL::FinishRender() {
 }
 
 int GfxRenderingAPIOGL::CreateFramebuffer() {
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] CreateFramebuffer enter\n"); fflush(stderr);
+#endif
     GLuint clrbuf;
     glGenTextures(1, &clrbuf);
     glBindTexture(GL_TEXTURE_2D, clrbuf);

@@ -39,6 +39,16 @@
 #include "ship/window/gui/Gui.h"
 #include "fast/Fast3dGui.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#include <emscripten/html5_webgl.h>
+#include <emscripten/threading.h>
+// WebGL2 context created directly on the rendering (worker) thread's
+// OffscreenCanvas, bypassing SDL2's main-thread context path.
+static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE sEmWebGlContext = 0;
+#endif
+
 #ifdef _WIN32
 #include <WTypesbase.h>
 #include <Windows.h>
@@ -328,6 +338,9 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
 #endif
 
     SDL_Init(SDL_INIT_VIDEO);
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] SDL_Init done\n"); fflush(stderr);
+#endif
 
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
@@ -385,7 +398,13 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
         flags = flags | SDL_WINDOW_METAL;
     }
 
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] before SDL_CreateWindow %dx%d\n", mWindowWidth, mWindowHeight); fflush(stderr);
+#endif
     mWnd = SDL_CreateWindow(title, posX, posY, mWindowWidth, mWindowHeight, flags);
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] after SDL_CreateWindow ptr=%p\n", (void*)mWnd); fflush(stderr);
+#endif
 #ifdef _WIN32
     // Get Windows window handle and use it to subclass the window procedure.
     // Needed to circumvent SDLs DPI scaling problems under windows (original does only scale *sometimes*).
@@ -412,9 +431,14 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
         }
 
         mCtx = SDL_GL_CreateContext(mWnd);
-
         SDL_GL_MakeCurrent(mWnd, mCtx);
+#ifndef __EMSCRIPTEN__
         SDL_GL_SetSwapInterval(mVsyncEnabled ? 1 : 0);
+#endif
+#ifdef __EMSCRIPTEN__
+        SDL_GL_GetDrawableSize(mWnd, &mWindowWidth, &mWindowHeight);
+        fprintf(stderr, "[GFXDBG] emscripten SDL GL context, drawable %dx%d\n", mWindowWidth, mWindowHeight); fflush(stderr);
+#endif
 
         window_impl.Opengl = { mWnd, mCtx };
         window_impl.Backend = WindowBackend::FAST3D_SDL_OPENGL;
@@ -665,13 +689,31 @@ void GfxWindowBackendSDL2::HandleSingleEvent(SDL_Event& event) {
 
 void GfxWindowBackendSDL2::HandleEvents() {
     SDL_Event event;
+#ifdef __EMSCRIPTEN__
+    // TEMP: skip all SDL event processing on web. Our source-built SDL2's
+    // emscripten event/joystick path faults; verifying the renderer first.
+    // Real input (keyboard/Gamepad API) is M4.
+    { static int _he = 0; if (_he < 2) { fprintf(stderr, "[GFXDBG] HandleEvents%d: skipped (web)\n", _he); fflush(stderr); _he++; } }
+    return;
+#endif
     SDL_PumpEvents();
+#ifdef __EMSCRIPTEN__
+    // TEMP: drain events without dispatch on web. The ImGui SDL2 event handler
+    // (HandleWindowEvents) faults here, likely touching the gamecontroller
+    // subsystem we skip-initialized. Bypassing it to verify rendering; real
+    // input wiring is M4.
+    SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+    return;
+#endif
     while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_CONTROLLERDEVICEADDED - 1) > 0) {
         HandleSingleEvent(event);
     }
     while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_CONTROLLERDEVICEREMOVED + 1, SDL_LASTEVENT) > 0) {
         HandleSingleEvent(event);
     }
+#ifdef __EMSCRIPTEN__
+    { static int _he3 = 0; if (_he3 < 2) { fprintf(stderr, "[GFXDBG] HandleEvents%d: peep loops done\n", _he3); fflush(stderr); _he3++; } }
+#endif
 
     // resync fullscreen state
 #ifdef __APPLE__
@@ -742,12 +784,19 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
 
     if (mVsyncEnabled != nextVsyncEnabled) {
         mVsyncEnabled = nextVsyncEnabled;
+#ifndef __EMSCRIPTEN__
         SDL_GL_SetSwapInterval(mVsyncEnabled ? 1 : 0);
         SDL_RenderSetVSync(mRenderer, mVsyncEnabled ? 1 : 0);
+#endif
     }
 
     SyncFramerateWithTime();
     SDL_GL_SwapWindow(mWnd);
+#ifdef __EMSCRIPTEN__
+    // Yield to the browser each frame (ASYNCIFY) so the main-thread canvas
+    // composites and the page stays responsive during the blocking game loop.
+    emscripten_sleep(0);
+#endif
 }
 
 void GfxWindowBackendSDL2::SwapBuffersEnd() {

@@ -4850,13 +4850,22 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     if (mTexUploadBuffer == nullptr) {
         // We cap texture max to 8k, because why would you need more?
         int max_tex_size = std::min(8192, mRapi->GetMaxTextureSize());
+#ifdef __EMSCRIPTEN__
+        fprintf(stderr, "[GFXDBG] Interp: max_tex_size=%d, malloc %d bytes\n", max_tex_size, max_tex_size*max_tex_size*4); fflush(stderr);
+#endif
         mTexUploadBuffer = (uint8_t*)malloc(max_tex_size * max_tex_size * 4);
+#ifdef __EMSCRIPTEN__
+        fprintf(stderr, "[GFXDBG] Interp: texbuf malloc -> %p\n", (void*)mTexUploadBuffer); fflush(stderr);
+#endif
     }
 
     ucode_handler_index = UcodeHandlers::ucode_f3dex2;
 
     // Pre-allocate texture cache buckets to prevent rehash-induced iterator invalidation.
     mTextureCache.map.reserve(TEXTURE_CACHE_MAX_SIZE);
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] Interpreter::Init done\n"); fflush(stderr);
+#endif
 }
 
 void Interpreter::Destroy() {
@@ -4907,6 +4916,19 @@ bool Interpreter::ViewportMatchesRendererResolution() {
 void Interpreter::StartFrame() {
     mWapi->GetDimensions(&mGfxCurrentWindowDimensions.width, &mGfxCurrentWindowDimensions.height, &mCurWindowPosX,
                          &mCurWindowPosY);
+#ifdef __EMSCRIPTEN__
+    // The render resolution is frozen at the config default (640x480) and never
+    // tracks the live canvas drawable size. With mRendersToFb=false the game is
+    // drawn directly into FB0 at this small res -> tiny image in the corner.
+    // Pin the render resolution to the actual canvas drawable each frame so the
+    // game fills the whole canvas, and make the game viewport match it.
+    mCurDimensions.width = mGfxCurrentWindowDimensions.width;
+    mCurDimensions.height = mGfxCurrentWindowDimensions.height;
+    mGameWindowViewport.x = 0;
+    mGameWindowViewport.y = 0;
+    mGameWindowViewport.width = mGfxCurrentWindowDimensions.width;
+    mGameWindowViewport.height = mGfxCurrentWindowDimensions.height;
+#endif
     if (mCurDimensions.height == 0) {
         // Avoid division by zero
         mCurDimensions.height = 1;
@@ -4951,6 +4973,12 @@ void Interpreter::StartFrame() {
     } else {
         mRendersToFb = false;
     }
+#ifdef __EMSCRIPTEN__
+    // TEMP: render the game directly to the canvas framebuffer, bypassing the
+    // intermediate game-FB + ImGui composite path (which doesn't present on web
+    // yet). Verifies the game image reaches the screen.
+    mRendersToFb = false;
+#endif
 
     mFbActive = false;
 }

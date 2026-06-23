@@ -1,6 +1,8 @@
 #include "libultraship/libultraship.h"
 #include <SDL2/SDL.h>
 #include <ratio>
+#include <cstdio>
+#include <filesystem>
 
 // Establish a chrono duration for the N64 46.875MHz clock rate
 typedef std::ratio<3000, 64> n64ClockRatio;
@@ -12,24 +14,50 @@ uint8_t __osMaxControllers = MAXCONTROLLERS;
 uint64_t __osCurrentTime = 0;
 
 int32_t osContInit(OSMesgQueue* mq, uint8_t* controllerBits, OSContStatus* status) {
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] osContInit(LUS): enter\n"); fflush(stderr);
+#endif
     *controllerBits = 0;
     status->status |= 1;
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] osContInit(LUS): after status write, before LocateFile\n"); fflush(stderr);
+#endif
 
     std::string controllerDb = Ship::Context::LocateFileAcrossAppDirs("gamecontrollerdb.txt");
-    int mappingsAdded = SDL_GameControllerAddMappingsFromFile(controllerDb.c_str());
-    if (mappingsAdded >= 0) {
-        SPDLOG_INFO("Added SDL game controllers from \"{}\" ({})", controllerDb, mappingsAdded);
-    } else {
-        SPDLOG_ERROR("Failed add SDL game controller mappings from \"{}\" ({})", controllerDb, SDL_GetError());
+    // Only load the mapping DB if it actually exists and is non-empty; on
+    // emscripten the file is absent and SDL_GameControllerAddMappingsFromFile
+    // dereferences a null SDL_RWops → OOB. SDL's built-in DB still applies.
+    if (std::filesystem::exists(controllerDb) && std::filesystem::file_size(controllerDb) > 0) {
+        int mappingsAdded = SDL_GameControllerAddMappingsFromFile(controllerDb.c_str());
+        if (mappingsAdded >= 0) {
+            SPDLOG_INFO("Added SDL game controllers from \"{}\" ({})", controllerDb, mappingsAdded);
+        } else {
+            SPDLOG_ERROR("Failed add SDL game controller mappings from \"{}\" ({})", controllerDb, SDL_GetError());
+        }
     }
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] osContInit(LUS): before SDL_Init(GAMECONTROLLER)\n"); fflush(stderr);
+#endif
 
+#ifndef __EMSCRIPTEN__
     SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
     if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
         SPDLOG_ERROR("Failed to initialize SDL game controllers ({})", SDL_GetError());
         exit(EXIT_FAILURE);
     }
+#else
+    // emscripten SDL2's gamecontroller subsystem init faults here; skip it.
+    // Keyboard input still works; gamepad (Gamepad API) can be wired up later.
+    fprintf(stderr, "[GFXDBG] osContInit(LUS): skipping SDL gamecontroller init on web\n"); fflush(stderr);
+#endif
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] osContInit(LUS): before ControlDeck->Init\n"); fflush(stderr);
+#endif
 
     Ship::Context::GetRawInstance()->GetControlDeck()->Init(controllerBits);
+#ifdef __EMSCRIPTEN__
+    fprintf(stderr, "[GFXDBG] osContInit(LUS): ControlDeck->Init done\n"); fflush(stderr);
+#endif
 
     return 0;
 }

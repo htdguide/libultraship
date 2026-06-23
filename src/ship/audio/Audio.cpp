@@ -67,6 +67,13 @@ AudioBackend Audio::GetCurrentAudioBackend() {
 }
 
 AudioBackend Audio::GetSavedAudioBackend() {
+#ifdef __EMSCRIPTEN__
+    // Main-thread + ASYNCIFY build: SDL2's emscripten audio backend (Web Audio)
+    // runs on the main thread now, so it works. The AudioContext starts
+    // suspended under the browser autoplay policy and is resumed on the first
+    // user gesture (handled in the HTML shell).
+    return AudioBackend::SDL;
+#endif
     std::string backendName = mConfig->GetString("Window.AudioBackend");
     if (backendName == "wasapi") {
         return AudioBackend::WASAPI;

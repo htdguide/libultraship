@@ -1,6 +1,7 @@
 #define NOMINMAX
 
 #include "ship/window/gui/Gui.h"
+#include <cstdio>
 
 #include <cstring>
 #include <utility>
@@ -259,10 +260,24 @@ void Gui::HandleMouseCapture() {
 }
 
 void Gui::StartFrame() {
+#ifdef __EMSCRIPTEN__
+    static int _sf = 0; bool _s0 = (_sf < 2);
+#define SFDBG(m) do { if (_s0) { fprintf(stderr, "[GFXDBG] StartFrame%d: " m "\n", _sf); fflush(stderr); } } while (0)
+#else
+#define SFDBG(m)
+#endif
     HandleMouseCapture();
+    SFDBG("before ImGuiBackendNewFrame");
     ImGuiBackendNewFrame();
+    SFDBG("before ImGuiWMNewFrame");
     ImGuiWMNewFrame();
+    SFDBG("before ImGui::NewFrame");
     ImGui::NewFrame();
+    SFDBG("StartFrame done");
+#ifdef __EMSCRIPTEN__
+    if (_s0) { _sf++; }
+#endif
+#undef SFDBG
 }
 
 void Gui::EndFrame() {
@@ -291,8 +306,13 @@ void Gui::CheckSaveCvars() {
 void Gui::StartDraw() {
     // Initialize the frame.
     StartFrame();
+#ifndef __EMSCRIPTEN__
     // Draw the gui menus
     DrawMenu();
+#else
+    // TEMP: SoH ImGui menu draw faults on web; skip to reach the game render.
+    { static int _dm = 0; if (_dm < 2) { fprintf(stderr, "[GFXDBG] StartDraw: DrawMenu skipped (web)\n"); fflush(stderr); _dm++; } }
+#endif
     // Calculate the available space the game can render to
     CalculateGameViewport();
 }

@@ -1,4 +1,5 @@
 #include "fast/Fast3dWindow.h"
+#include <cstdio>
 
 #include "ship/Context.h"
 #include "ship/config/Config.h"
@@ -202,18 +203,34 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     }
 
     auto gui = wnd->GetGui();
+#ifdef __EMSCRIPTEN__
+    static int _dc = 0; bool _d0 = (_dc < 2);
+#define DCDBG(m) do { if (_d0) { fprintf(stderr, "[GFXDBG] Draw%d: " m "\n", _dc); fflush(stderr); } } while (0)
+#else
+#define DCDBG(m)
+#endif
     // Setup mouse state manager
     wnd->GetMouseStateManager()->StartFrame();
+    DCDBG("before gui->StartDraw");
     // Setup of the backend frames and draw initial Window and GUI menus
     gui->StartDraw();
+    DCDBG("StartDraw done, before Interp::StartFrame");
     // Setup game framebuffers to match available window space
     mInterpreter->StartFrame();
+    DCDBG("Interp::StartFrame done, before Interp::Run");
     // Execute the games gfx commands
     mInterpreter->Run(commands, mtxReplacements);
+    DCDBG("Interp::Run done, before gui->EndDraw");
     // Renders the game frame buffer to the final window and finishes the GUI
     gui->EndDraw();
+    DCDBG("EndDraw done, before Interp::EndFrame");
     // Finalize swap buffers
     mInterpreter->EndFrame();
+    DCDBG("EndFrame done (FRAME PRESENTED)");
+#ifdef __EMSCRIPTEN__
+    if (_d0) { _dc++; }
+#endif
+#undef DCDBG
 
     return true;
 }
