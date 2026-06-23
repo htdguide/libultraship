@@ -46,9 +46,17 @@ int32_t osContInit(OSMesgQueue* mq, uint8_t* controllerBits, OSContStatus* statu
         exit(EXIT_FAILURE);
     }
 #else
-    // emscripten SDL2's gamecontroller subsystem init faults here; skip it.
-    // Keyboard input still works; gamepad (Gamepad API) can be wired up later.
-    fprintf(stderr, "[GFXDBG] osContInit(LUS): skipping SDL gamecontroller init on web\n"); fflush(stderr);
+    // On the web SDL2 maps the browser Gamepad API to its gamecontroller
+    // subsystem; poll on the main thread (no joystick thread) and don't abort
+    // the boot if init fails - keyboard input still works.
+    if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
+        SPDLOG_ERROR("Failed to initialize SDL game controllers on web ({})", SDL_GetError());
+        fprintf(stderr, "[GFXDBG] osContInit(LUS): SDL gamecontroller init failed: %s\n", SDL_GetError());
+        fflush(stderr);
+    } else {
+        fprintf(stderr, "[GFXDBG] osContInit(LUS): SDL gamecontroller init OK\n");
+        fflush(stderr);
+    }
 #endif
 #ifdef __EMSCRIPTEN__
     fprintf(stderr, "[GFXDBG] osContInit(LUS): before ControlDeck->Init\n"); fflush(stderr);

@@ -310,8 +310,15 @@ void Gui::StartDraw() {
     // Draw the gui menus
     DrawMenu();
 #else
-    // TEMP: SoH ImGui menu draw faults on web; skip to reach the game render.
+    // The SoH ImGui menu draw faults on web, so DrawMenu() is skipped. That loop
+    // also drives the GuiWindows' per-frame Update(), including the SDL gamepad
+    // connect/disconnect handler. Run that one window's Update() directly so the
+    // browser Gamepad API maps into SDL and controllers get opened.
     { static int _dm = 0; if (_dm < 2) { fprintf(stderr, "[GFXDBG] StartDraw: DrawMenu skipped (web)\n"); fflush(stderr); _dm++; } }
+    auto sdlDeviceHandler = GetGuiWindow("SDLAddRemoveDeviceEventHandler");
+    if (sdlDeviceHandler != nullptr) {
+        sdlDeviceHandler->Update();
+    }
 #endif
     // Calculate the available space the game can render to
     CalculateGameViewport();
