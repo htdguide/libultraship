@@ -54,7 +54,15 @@ int SDLAudioPlayer::Buffered() {
 }
 
 void SDLAudioPlayer::DoPlay(const uint8_t* buf, size_t len) {
-    if (Buffered() < 6000) {
+#ifdef __EMSCRIPTEN__
+    // The web ScriptProcessor callback runs on the main thread and can be
+    // starved by long ASYNCIFY frames; allow a deeper queue so the reservoir can
+    // reach DesiredBuffered and ride out those stalls without underrunning.
+    const int cap = GetDesiredBuffered() + 2048;
+#else
+    const int cap = 6000;
+#endif
+    if (Buffered() < cap) {
         // Don't fill the audio buffer too much in case this happens
         SDL_QueueAudio(mDevice, buf, len);
     }
