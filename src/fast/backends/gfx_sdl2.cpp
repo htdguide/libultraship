@@ -40,6 +40,7 @@
 #include "fast/Fast3dGui.h"
 
 #ifdef __EMSCRIPTEN__
+#include <cstring>
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #include <emscripten/html5_webgl.h>
@@ -47,6 +48,75 @@
 // WebGL2 context created directly on the rendering (worker) thread's
 // OffscreenCanvas, bypassing SDL2's main-thread context path.
 static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE sEmWebGlContext = 0;
+
+// Keyboard input on the web. SDL2's emscripten backend has broken scan codes
+// (libsdl bugzilla 3259) and its event handler faults here, so we bypass SDL
+// entirely and translate browser DOM key events to LUS (PS/2 set-1) scan codes,
+// driving the same onKeyDown/onKeyUp callbacks the native SDL path would.
+static bool (*sWebOnKeyDown)(int scancode) = nullptr;
+static bool (*sWebOnKeyUp)(int scancode) = nullptr;
+
+// Map a DOM KeyboardEvent.code string to a LUS scan code (KbScancode). Covers
+// the keys an OOT player needs; unknown codes return 0 (ignored).
+static int DomCodeToLusScancode(const char* code) {
+    struct Entry {
+        const char* code;
+        int lus;
+    };
+    static const Entry kTable[] = {
+        // Letters
+        { "KeyA", 30 },  { "KeyB", 48 },  { "KeyC", 46 },  { "KeyD", 32 },  { "KeyE", 18 },  { "KeyF", 33 },
+        { "KeyG", 34 },  { "KeyH", 35 },  { "KeyI", 23 },  { "KeyJ", 36 },  { "KeyK", 37 },  { "KeyL", 38 },
+        { "KeyM", 50 },  { "KeyN", 49 },  { "KeyO", 24 },  { "KeyP", 25 },  { "KeyQ", 16 },  { "KeyR", 19 },
+        { "KeyS", 31 },  { "KeyT", 20 },  { "KeyU", 22 },  { "KeyV", 47 },  { "KeyW", 17 },  { "KeyX", 45 },
+        { "KeyY", 21 },  { "KeyZ", 44 },
+        // Number row
+        { "Digit1", 2 }, { "Digit2", 3 }, { "Digit3", 4 }, { "Digit4", 5 }, { "Digit5", 6 }, { "Digit6", 7 },
+        { "Digit7", 8 }, { "Digit8", 9 }, { "Digit9", 10 }, { "Digit0", 11 },
+        // Modifiers / editing
+        { "Escape", 1 },     { "Minus", 12 },      { "Equal", 13 },     { "Backspace", 14 }, { "Tab", 15 },
+        { "BracketLeft", 26 }, { "BracketRight", 27 }, { "Enter", 28 },  { "ControlLeft", 29 },
+        { "ControlRight", 29 }, { "Semicolon", 39 }, { "Quote", 40 },    { "Backquote", 41 }, { "ShiftLeft", 42 },
+        { "Backslash", 43 }, { "Comma", 51 },      { "Period", 52 },    { "Slash", 53 },     { "ShiftRight", 54 },
+        { "AltLeft", 56 },   { "AltRight", 56 },   { "Space", 57 },     { "CapsLock", 58 },
+        // Function keys
+        { "F1", 59 }, { "F2", 60 }, { "F3", 61 }, { "F4", 62 }, { "F5", 63 }, { "F6", 64 }, { "F7", 65 },
+        { "F8", 66 }, { "F9", 67 }, { "F10", 68 }, { "F11", 87 }, { "F12", 88 },
+        // Numpad
+        { "Numpad7", 71 }, { "Numpad8", 72 }, { "Numpad9", 73 }, { "NumpadSubtract", 74 }, { "Numpad4", 75 },
+        { "Numpad5", 76 }, { "Numpad6", 77 }, { "NumpadAdd", 78 }, { "Numpad1", 79 }, { "Numpad2", 80 },
+        { "Numpad3", 81 }, { "Numpad0", 82 }, { "NumpadDecimal", 83 },
+        // Arrows (LUS extended scan codes)
+        { "ArrowUp", 328 }, { "ArrowLeft", 331 }, { "ArrowRight", 333 }, { "ArrowDown", 336 },
+    };
+    for (const auto& e : kTable) {
+        if (strcmp(e.code, code) == 0) {
+            return e.lus;
+        }
+    }
+    return 0;
+}
+
+static EM_BOOL EmKeyDownCb(int eventType, const EmscriptenKeyboardEvent* e, void* userData) {
+    if (e->repeat) {
+        return EM_TRUE; // ignore auto-repeat; the game tracks held state itself
+    }
+    int lus = DomCodeToLusScancode(e->code);
+    if (lus != 0 && sWebOnKeyDown != nullptr) {
+        sWebOnKeyDown(lus);
+        return EM_TRUE; // consume so the browser doesn't scroll on arrows/space
+    }
+    return EM_FALSE;
+}
+
+static EM_BOOL EmKeyUpCb(int eventType, const EmscriptenKeyboardEvent* e, void* userData) {
+    int lus = DomCodeToLusScancode(e->code);
+    if (lus != 0 && sWebOnKeyUp != nullptr) {
+        sWebOnKeyUp(lus);
+        return EM_TRUE;
+    }
+    return EM_FALSE;
+}
 #endif
 
 #ifdef _WIN32
@@ -541,6 +611,17 @@ void GfxWindowBackendSDL2::SetKeyboardCallbacks(bool (*onKeyDown)(int scancode),
     mOnKeyDown = onKeyDown;
     mOnKeyUp = onKeyUp;
     mOnAllKeysUp = onAllKeysUp;
+#ifdef __EMSCRIPTEN__
+    // Wire browser keyboard events to these callbacks (see DomCodeToLusScancode).
+    sWebOnKeyDown = onKeyDown;
+    sWebOnKeyUp = onKeyUp;
+    static bool sRegistered = false;
+    if (!sRegistered) {
+        sRegistered = true;
+        emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, EmKeyDownCb);
+        emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, EmKeyUpCb);
+    }
+#endif
 }
 
 void GfxWindowBackendSDL2::SetMouseCallbacks(bool (*onMouseButtonDown)(int btn), bool (*onMouseButtonUp)(int btn)) {
